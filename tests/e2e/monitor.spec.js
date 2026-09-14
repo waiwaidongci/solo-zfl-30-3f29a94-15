@@ -201,6 +201,37 @@ test('发布回滚：回滚恢复旧版配置与结果；重算失败保留上�
   expect(await page.evaluate(() => window.__app.state.versions.length)).toBe(2);
 });
 
+test('回滚恢复完整传感器集合：旧版发布后新增的传感器不残留', async ({ page }) => {
+  await freshApp(page);
+  const sid = await sensorId(page, 'turbidity');
+  await importCsv(page, HEADER + csvRows(sid, 90, [30, 30, 30]));
+  await republish(page); // v1
+  const sensorCount = await page.evaluate(() => window.__app.state.sensors.length);
+
+  // 通过 UI 新增传感器并发布 v2
+  await page.click('nav.tabs button[data-tab="registry"]');
+  await page.fill('#sensorName', '新增备用传感器');
+  await page.selectOption('#sensorMetric', 'ph');
+  await page.click('#addSensorBtn');
+  expect(await page.evaluate(() => window.__app.state.sensors.length)).toBe(sensorCount + 1);
+  await republish(page); // v2
+  await expect(page.locator('[data-testid="reports-fresh"]')).toBeVisible();
+
+  // 回滚 v1：新增传感器应从当前配置中消失，旧版立即恢复有效
+  await page.click('nav.tabs button[data-tab="reports"]');
+  await page.click('[data-version="v1"] [data-action="rollback"]');
+  await expect(page.locator('[data-testid="reports-fresh"]')).toBeVisible();
+  await expect(page.locator('[data-testid="stale-badge"]')).not.toBeVisible();
+  expect(await page.evaluate(() => window.__app.state.publishedVersionId)).toBe('v1');
+  expect(await page.evaluate(() => window.__app.state.sensors.length)).toBe(sensorCount);
+  expect(await page.evaluate(() => window.__app.status().stale)).toBe(false);
+
+  // 登记页与隔离/告警流程不受影响
+  await page.click('nav.tabs button[data-tab="registry"]');
+  await expect(page.locator('#sensorList')).not.toContainText('新增备用传感器');
+  await expect(page.locator('#sensorList')).toContainText('浊度');
+});
+
 test('响应式：手机与桌面均可操作', async ({ page }) => {
   // 桌面
   await page.setViewportSize({ width: 1280, height: 800 });

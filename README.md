@@ -16,9 +16,11 @@ npm run serve          # 启动静态服务器 http://127.0.0.1:8734
 ## 测试
 
 ```bash
-npm test               # 单元测试（node:test，44 项）
-npm run test:e2e       # 真实浏览器验证（Playwright + Chromium，6 项）
-node scripts/screenshot.mjs  # 生成桌面/手机截图到 /tmp/shots
+npm test               # 单元测试（node:test，47 项；入口 scripts/run-unit-tests.mjs 显式枚举
+                       # 测试文件，兼容把目录当模块加载的旧版 Node）
+npm run test:e2e       # 真实浏览器验证（Playwright + Chromium，7 项）
+node tests/unit/alerts.test.js  # 每个测试文件也可被 node 直接执行
+node scripts/screenshot.mjs     # 生成桌面/手机截图到 /tmp/shots
 ```
 
 > 本容器无 root，Chromium 系统库已解压至 /tmp/debs/root，playwright.config.js 会自动注入
@@ -43,7 +45,8 @@ node scripts/screenshot.mjs  # 生成桌面/手机截图到 /tmp/shots
 
 **版本化发布**（`src/core/pipeline.js`）：阈值、校准或有效序列一变，已发布结果与报告立即
 失效；重算对同一输入连续执行两遍，摘要一致才允许发布；重算失败（如数据损坏）保留上一
-发布版；回滚会恢复目标版本的配置快照（阈值与校准随结果一起回滚）。
+发布版；回滚完整恢复目标版本的配置（遗址/站点/传感器集合与阈值、校准记录）与有效序列，
+此后新增的传感器、校准或读数不会残留，旧版结果与哈希即刻恢复一致。
 
 ## 结构
 

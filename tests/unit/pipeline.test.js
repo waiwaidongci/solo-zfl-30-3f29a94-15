@@ -109,3 +109,57 @@ test('同一输入两次计算摘要一致（确定性）', () => {
   const b = computeResults(s, NOW);
   assert.deepEqual(a, b);
 });
+
+test('回滚恢复完整传感器集合：发布后新增的传感器/校准/数据不残留', () => {
+  const s = makeState();
+  const v1 = recompute(s, NOW);
+  publish(s, v1.id);
+
+  // 发布 v1 后：新增传感器（含读数）、新增校准记录，发布 v2
+  s.sensors.push({
+    id: 'sen2', stationId: 'st1', name: '浊度', metric: 'turbidity',
+    cfg: {
+      warnLow: 0, warnHigh: 25, recoverLow: 0, recoverHigh: 20,
+      openAfter: 3, closeAfter: 3, intervalMinutes: 30, gapFactor: 2.5,
+      maxAgeHours: 6, critical: false, maxReadingAgeDays: 90,
+    },
+  });
+  s.series.sen2 = [{ t: NOW - 30 * 60000, v: 3, raw: 3, calibrated: false }];
+  s.calibrations.push({ id: 'cal-new', sensorId: 'sen1', start: 0, end: NOW, gain: 1, offset: 0 });
+  const v2 = recompute(s, NOW);
+  publish(s, v2.id);
+  assert.equal(currentStatus(s).stale, false);
+  assert.equal(s.sensors.length, 2);
+
+  rollback(s, v1.id);
+
+  // 新增项全部移除，完整恢复 v1 的传感器集合与配置
+  assert.deepEqual(s.sensors.map(x => x.id), ['sen1']);
+  assert.equal(s.series.sen2, undefined);
+  assert.equal(s.calibrations.length, 0);
+  // 哈希与 v1 一致 → 不再失效，旧版结果完整可用
+  assert.equal(configHash(s), v1.configHash);
+  assert.equal(dataHash(s), v1.dataHash);
+  const st = currentStatus(s);
+  assert.equal(st.stale, false);
+  assert.equal(st.published.id, 'v1');
+  assert.equal(st.published.results.risks.site1.level, 'ALERT');
+  assert.equal(st.published.reports.site1.validReadings, 3);
+});
+
+test('回滚后再次重算发布：流程不受残留影响', () => {
+  const s = makeState();
+  const v1 = recompute(s, NOW);
+  publish(s, v1.id);
+  s.sensors.push({
+    id: 'sen2', stationId: 'st1', name: '浊度', metric: 'turbidity',
+    cfg: { ...s.sensors[0].cfg, critical: false },
+  });
+  publish(s, recompute(s, NOW).id); // v2
+  rollback(s, v1.id);
+  // 回滚后立即重算发布，应当成功且结果与 v1 一致
+  const v3 = recompute(s, NOW);
+  publish(s, v3.id);
+  assert.equal(currentStatus(s).stale, false);
+  assert.equal(v3.digest, v1.digest);
+});

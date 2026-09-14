@@ -12,11 +12,16 @@ import { METRICS } from './schema.js';
 
 // ---- 配置与数据快照 ----
 
+const byId = (a, b) => (a.id < b.id ? -1 : 1);
+const clone = x => JSON.parse(JSON.stringify(x));
+
 export function configSnapshot(state) {
   return {
+    sites: state.sites.map(s => ({ ...s })).sort(byId),
+    stations: state.stations.map(s => ({ ...s })).sort(byId),
     sensors: state.sensors.map(s => ({ id: s.id, stationId: s.stationId, name: s.name, metric: s.metric, cfg: { ...s.cfg } }))
-      .sort((a, b) => a.id < b.id ? -1 : 1),
-    calibrations: state.calibrations.map(c => ({ ...c })).sort((a, b) => a.id < b.id ? -1 : 1),
+      .sort(byId),
+    calibrations: state.calibrations.map(c => ({ ...c })).sort(byId),
   };
 }
 
@@ -134,6 +139,7 @@ export function recompute(state, now) {
     configHash: hashObject(snap),
     dataHash: dataHash(state),
     configSnapshot: snap,
+    seriesSnapshot: clone(state.series), // 回滚时完整恢复有效序列
     digest: digestA,
     consistent: true,
     results: runA,
@@ -163,16 +169,19 @@ export function publish(state, versionId) {
   return version;
 }
 
-// 回滚：恢复目标版本的配置快照（阈值与校准随结果一起回滚），并将发布指针指向它。
+// 回滚：完整恢复目标版本的配置（遗址/站点/传感器集合与阈值、校准记录）与有效序列，
+// 并将发布指针指向它。回滚后配置哈希、数据哈希均与该版本一致，结果立即恢复有效；
+// 此后新增的传感器、校准或读数不会残留，也就不会破坏旧版结果。
 export function rollback(state, versionId) {
   const version = state.versions.find(v => v.id === versionId);
   if (!version) throw new Error(`版本 ${versionId} 不存在`);
   const snap = version.configSnapshot;
-  for (const sSnap of snap.sensors) {
-    const sensor = state.sensors.find(s => s.id === sSnap.id);
-    if (sensor) { sensor.cfg = { ...sSnap.cfg }; }
-  }
+  // 兼容早期版本快照（缺少 sites/stations/seriesSnapshot 时保留现状）
+  if (snap.sites) state.sites = snap.sites.map(s => ({ ...s }));
+  if (snap.stations) state.stations = snap.stations.map(s => ({ ...s }));
+  state.sensors = snap.sensors.map(s => ({ ...s, cfg: { ...s.cfg } }));
   state.calibrations = snap.calibrations.map(c => ({ ...c }));
+  if (version.seriesSnapshot) state.series = clone(version.seriesSnapshot);
   state.publishedVersionId = version.id;
   return version;
 }
